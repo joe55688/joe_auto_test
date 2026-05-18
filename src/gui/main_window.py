@@ -289,12 +289,34 @@ class MainWindow(QMainWindow):
             return
 
         script_data = selected_items[0].data(Qt.UserRole)
+        
+        # Debug: Log script data
+        logger.info(f"Selected script data keys: {script_data.keys()}")
+        logger.info(f"Script filepath: {script_data.get('filepath')}")
+        
         events = script_data.get('events', [])
+        
+        # If events is empty, try to reload from file
+        if not events:
+            logger.warning("Events list is empty, attempting to reload from file...")
+            filepath = script_data.get('filepath')
+            if filepath:
+                import json
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        full_data = json.load(f)
+                    events = full_data.get('events', [])
+                    logger.info(f"Reloaded {len(events)} events from file")
+                except Exception as e:
+                    logger.error(f"Failed to reload events: {e}")
 
         if not events:
             QMessageBox.warning(self, "Error", "No events in script")
+            logger.error(f"No events found in script: {script_data.get('name')}")
             return
 
+        logger.info(f"Starting playback with {len(events)} events")
+        
         speed = 0.5 + (self.speed_slider.value() - 5) * 0.1
         self.player = Player(events)
         self.player.playback(speed=speed, progress_callback=self.update_playback_progress)
