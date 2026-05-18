@@ -17,6 +17,7 @@ from src.recorder import Recorder
 from src.player import Player
 from src.screenshot_matcher import ScreenshotMatcher
 from src.script_manager import ScriptManager
+from src.hotkey_manager import HotKeyManager
 from src import config
 
 # Setup logging
@@ -41,10 +42,50 @@ class MainWindow(QMainWindow):
         self.script_manager = ScriptManager()
         self.screenshot_matcher = ScreenshotMatcher(threshold=config.SIMILARITY_THRESHOLD)
         self.player = None
+        self.hotkey_manager = HotKeyManager()
 
         # Setup UI
         self.setup_ui()
         self.load_scripts_list()
+        
+        # Register global hotkeys
+        self.setup_hotkeys()
+
+    def setup_hotkeys(self) -> None:
+        """Setup global hotkeys for recording control"""
+        try:
+            self.hotkey_manager.register_hotkeys(
+                on_f2=self.hotkey_start_recording,
+                on_f3=self.hotkey_stop_recording
+            )
+            logger.info("Global hotkeys initialized: F2=Start, F3=Stop")
+        except Exception as e:
+            logger.error(f"Failed to setup hotkeys: {e}")
+
+    def hotkey_start_recording(self) -> None:
+        """Start recording via F2 hotkey"""
+        # Validate script name
+        if not self.recording_name_input.text().strip():
+            self.recording_name_input.setFocus()
+            self.recording_name_input.setText(f"Recording_{self.recorder.start_time.strftime('%Y%m%d_%H%M%S') if self.recorder.start_time else 'Auto'}")
+        
+        # If already recording, ignore
+        if self.recorder.is_recording:
+            logger.warning("Recording already in progress")
+            return
+        
+        # Start recording
+        self.start_recording()
+
+    def hotkey_stop_recording(self) -> None:
+        """Stop recording via F3 hotkey"""
+        # If not recording, ignore
+        if not self.recorder.is_recording:
+            logger.warning("Recording not in progress")
+            return
+        
+        # Stop recording
+        self.stop_recording()
 
     def setup_ui(self) -> None:
         """Setup the user interface"""
@@ -76,21 +117,27 @@ class MainWindow(QMainWindow):
         title.setFont(QFont('Arial', 14, QFont.Bold))
         layout.addWidget(title)
 
+        # Hotkey info
+        hotkey_info = QLabel("💡 Hotkeys: F2 = Start Recording | F3 = Stop Recording")
+        hotkey_info.setFont(QFont('Arial', 10))
+        hotkey_info.setStyleSheet("color: #0066cc; font-weight: bold;")
+        layout.addWidget(hotkey_info)
+
         # Script name input
         name_layout = QHBoxLayout()
         name_layout.addWidget(QLabel("Script Name:"))
         self.recording_name_input = QLineEdit()
-        self.recording_name_input.setPlaceholderText("Enter script name")
+        self.recording_name_input.setPlaceholderText("Enter script name (or leave blank for auto-generated)")
         name_layout.addWidget(self.recording_name_input)
         layout.addLayout(name_layout)
 
         # Buttons
         button_layout = QHBoxLayout()
-        self.start_recording_btn = QPushButton("Start Recording")
+        self.start_recording_btn = QPushButton("Start Recording (F2)")
         self.start_recording_btn.clicked.connect(self.start_recording)
         button_layout.addWidget(self.start_recording_btn)
 
-        self.stop_recording_btn = QPushButton("Stop Recording")
+        self.stop_recording_btn = QPushButton("Stop Recording (F3)")
         self.stop_recording_btn.clicked.connect(self.stop_recording)
         self.stop_recording_btn.setEnabled(False)
         button_layout.addWidget(self.stop_recording_btn)
@@ -218,27 +265,28 @@ class MainWindow(QMainWindow):
 
     def start_recording(self) -> None:
         """Start recording"""
+        # Generate auto script name if empty
         if not self.recording_name_input.text().strip():
-            QMessageBox.warning(self, "Error", "Please enter a script name")
-            return
+            from datetime import datetime
+            self.recording_name_input.setText(f"Recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
         self.recorder.start()
         self.start_recording_btn.setEnabled(False)
         self.stop_recording_btn.setEnabled(True)
         self.recording_name_input.setEnabled(False)
-        self.recording_status.setText("Status: Recording...")
-        self.recording_log.append("[INFO] Recording started")
-        logger.info("Recording started via GUI")
+        self.recording_status.setText("Status: Recording... (Press F3 to stop)")
+        self.recording_log.append("[INFO] Recording started (F2 pressed)")
+        logger.info("Recording started via GUI or F2 hotkey")
 
     def stop_recording(self) -> None:
         """Stop recording"""
         events = self.recorder.stop()
         script_name = self.recording_name_input.text().strip()
 
-        if self.script_manager.save_script(script_name, events, "Recorded via GUI"):
+        if self.script_manager.save_script(script_name, events, "Recorded via GUI or F2/F3 hotkey"):
             self.recording_status.setText(f"Status: Saved {len(events)} events")
-            self.recording_log.append(f"[INFO] Recording stopped and saved ({len(events)} events)")
-            QMessageBox.information(self, "Success", f"Script saved: {script_name}")
+            self.recording_log.append(f"[INFO] Recording stopped and saved ({len(events)} events) (F3 pressed)")
+            QMessageBox.information(self, "Success", f"Script saved: {script_name}\n\n{len(events)} events recorded")
             self.load_scripts_list()
         else:
             self.recording_status.setText("Status: Error saving script")
@@ -365,6 +413,20 @@ class MainWindow(QMainWindow):
             self.comparison_result.setText(f"Similarity: {similarity:.2%}")
         else:
             QMessageBox.warning(self, "Error", "Please select exactly 2 screenshots")
+
+    def closeEvent(self, event):
+        """Handle window close event"""
+        # Clean up hotkeys
+        try:
+            self.hotkey_manager.unregister_hotkeys()
+        except Exception as e:
+            logger.error(f"Error unregistering hotkeys: {e}")
+        
+        # Stop recording if in progress
+        if self.recorder.is_recording:
+            self.recorder.stop()
+        
+        event.accept()
 
 
 def main():
